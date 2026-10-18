@@ -1,0 +1,126 @@
+-- =======================================================
+-- ULTIMATE NO-COOLDOWN STABILIZED AIR SLIDE FOR RIVALS
+-- =======================================================
+-- Fixed weapon switching pull-back bugs and removed cooldowns.
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Engine Configuration
+local SLIDE_SPEED = 33        -- Speed matches native ground sliding mechanics
+local SLIDE_DURATION = 0.45   -- Standard timeframe window matching the animation length
+local HITBOX_OFFSET = -3.00   -- Flawless alignment beneath the feet to stop camera bouncing
+
+local isSliding = false
+local currentPlatform = nil
+local currentVelocity = nil
+
+-- Safe dismantling process to completely wipe assets and block rubberbanding
+local function clearSlidePhysics()
+    isSliding = false
+    if currentVelocity and currentVelocity.Parent then
+        currentVelocity:Destroy()
+    end
+    currentVelocity = nil
+    currentPlatform = nil -- Let the PreRender loop auto-destroy the physical instance safely
+end
+
+-- High-frequency platform rendering loop
+local function createStableAirHitbox(character, rootPart)
+    local fakeFloor = Instance.new("Part")
+    fakeFloor.Name = "StableAirSlideFloor"
+    fakeFloor.Size = Vector3.new(6, 0.2, 6)
+    fakeFloor.Anchored = true
+    fakeFloor.CanCollide = true
+    fakeFloor.Transparency = 1 -- Invisible platform
+    fakeFloor.Material = Enum.Material.SmoothPlastic
+    fakeFloor.Parent = workspace
+    
+    currentPlatform = fakeFloor
+    
+    local frameConnection
+    frameConnection = RunService.PreRender:Connect(function()
+        if not isSliding or not rootPart or not rootPart.Parent or currentPlatform ~= fakeFloor then
+            if frameConnection then frameConnection:Disconnect() end
+            fakeFloor:Destroy()
+            return
+        end
+        -- Keep the platform perfectly locked under the player frame-by-frame
+        fakeFloor.CFrame = rootPart.CFrame * CFrame.new(0, HITBOX_OFFSET, 0)
+    end)
+    
+    return fakeFloor
+end
+
+-- Core movement engine
+local function handleStabilizedAirSlide()
+    local character = LocalPlayer.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    
+    if not rootPart or not humanoid or isSliding then return end
+    
+    -- Force execution only if airborne
+    if humanoid.FloorMaterial == Enum.Material.Air then
+        isSliding = true
+        
+        -- Spawn the perfectly synchronized local platform floor
+        createStableAirHitbox(character, rootPart)
+        
+        -- Apply smooth horizontal driving velocity forces
+        local bodyVelocity = Instance.new("BodyVelocity")
+        bodyVelocity.MaxForce = Vector3.new(200000, 0, 200000) -- Linear horizontal vector lock
+        bodyVelocity.Velocity = rootPart.CFrame.LookVector * SLIDE_SPEED
+        bodyVelocity.Parent = rootPart
+        
+        currentVelocity = bodyVelocity
+        
+        -- Track the exact lifespan duration frame loop
+        task.wait(SLIDE_DURATION)
+        
+        -- Deconstruct cleanly if it hasn't already been interrupted by a weapon swap
+        if isSliding then
+            clearSlidePhysics()
+        end
+    end
+end
+
+-- =======================================================
+-- ANTI-PULLBACK ENGINE: MONITOR WEAPON SWAPPING IN REALTIME
+-- =======================================================
+local function hookWeaponConnections(character)
+    -- Monitor tools being added or removed from the character structure
+    character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and isSliding then
+            clearSlidePhysics() -- Instantly drops physics forces before network snap occurs
+        end
+    end)
+
+    character.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") and isSliding then
+            clearSlidePhysics() -- Safety catch for un-equipping a weapon mid-slide
+        end
+    end)
+end
+
+-- Setup connection handling across initial spawns and respawns
+if LocalPlayer.Character then hookWeaponConnections(LocalPlayer.Character) end
+LocalPlayer.CharacterAdded:Connect(hookWeaponConnections)
+
+-- Hook into native crouch keybinds and mobile touch interface nodes
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.C or input.UserInputType == Enum.UserInputType.Touch then
+        
+        task.defer(function()
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            
+            -- If you hit your real slide button while mid-air (NO COOLDOWN CHECK)
+            if humanoid and humanoid.FloorMaterial == Enum.Material.Air then
+                handleStabilizedAirSlide()
+            end
+        end)
+    end
+end)
